@@ -15,7 +15,7 @@ This repository contains the offline training pipeline for XTI-SOC. It trains an
 
 | Name | Department |
 |---|---|
-| Bhojak Bhargav Hemen | CSE (Cyber Security) |
+| Bhojak Bhargav Hemen | CSE (AI & ML) |
 | Bhuvan Agarwal | CSE (AI & ML) |
 | Khushi Nawal | CSE (AI & ML) |
 | Naman Jain | CSE (Cyber Security) |
