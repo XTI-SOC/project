@@ -198,7 +198,9 @@ def process_packet(pkt: dict) -> None:
             session = _sessions[key]
             session["last_seen"] = now
 
-            is_forward = (pkt["src_ip"] == session["fwd_ip"])
+            # Compare (ip, port) pair — not just IP — so that loopback traffic
+            # (src_ip == dst_ip == 127.0.0.1) is still directionally correct.
+            is_forward = (pkt["src_ip"], pkt["src_port"]) == (session["fwd_ip"], session["src_port"])
 
             if is_forward:
                 # IAT: only if there was a previous forward packet
