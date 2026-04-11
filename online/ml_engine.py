@@ -53,7 +53,8 @@ def _load_artifacts() -> None:
     # Load model
     with open(_MODEL_PATH, 'rb') as f:
         MODEL = pickle.load(f)
-    print(f"  ✅ Model: {type(MODEL).__name__} ({MODEL.n_features_in_} features)")
+    print(f"  [OK] Model: {type(MODEL).__name__} ({MODEL.n_features_in_} features)")
+
     
     # Load scaler
     with open(_SCALER_PATH, 'rb') as f:
@@ -63,22 +64,22 @@ def _load_artifacts() -> None:
     # Verify scaler has correct attributes (works for both Standard and Robust)
     if hasattr(SCALER, 'center_'):
         n_features = len(SCALER.center_)
-        print(f"  ✅ Scaler: {scaler_type} ({n_features} features, using .center_)")
+        print(f"  [OK] Scaler: {scaler_type} ({n_features} features, using .center_)")
     elif hasattr(SCALER, 'mean_'):
         n_features = len(SCALER.mean_)
-        print(f"  ✅ Scaler: {scaler_type} ({n_features} features, using .mean_)")
+        print(f"  [OK] Scaler: {scaler_type} ({n_features} features, using .mean_)")
     else:
         raise AttributeError(f"Scaler {scaler_type} has unknown attributes")
     
     # Load explainer (not used in Phase 2, but verify it exists)
     with open(_EXPLAINER_PATH, 'rb') as f:
         EXPLAINER = pickle.load(f)
-    print(f"  ✅ Explainer: {type(EXPLAINER).__name__}")
+    print(f"  [OK] Explainer: {type(EXPLAINER).__name__}")
     
     # Load feature list
     with open(_FEATURES_PATH, 'rb') as f:
         FEATURE_LIST = pickle.load(f)
-    print(f"  ✅ Feature list: {len(FEATURE_LIST)} features")
+    print(f"  [OK] Feature list: {len(FEATURE_LIST)} features")
     
     # Verify feature count consistency
     if MODEL.n_features_in_ != n_features != len(FEATURE_LIST):

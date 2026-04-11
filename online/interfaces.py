@@ -85,3 +85,40 @@ def get_default_interface() -> str:
 
     ifaces = get_interfaces()
     return ifaces[0]["name"] if ifaces else ""
+
+
+def resolve_interface_name(name: str) -> str:
+    """
+    Given a friendly name like 'Wi-Fi' or 'Ethernet', returns the NPF GUID required
+    by nfstream on Windows (e.g. \\Device\\NPF_{...}).
+    If the name is already a valid GUID or Linux interface, it is returned as-is.
+    """
+    if not name:
+        return ""
+
+    # Already an NPF GUID or Linux typical interface
+    if name.startswith("\\Device\\NPF_") or name.startswith("eth") or name.startswith("wlan"):
+        return name
+
+    ifaces = get_interfaces()
+    name_lower = name.lower()
+
+    # 1. Check against the display strings from get_interfaces()
+    for iface in ifaces:
+        display_lower = iface["display"].lower()
+        clean_display = display_lower.split(" (")[0].strip()
+        if name_lower == clean_display or name_lower in clean_display:
+            return iface["name"]
+
+    # 2. Check raw scapy interfaces for Windows "friendly" names
+    try:
+        from scapy.all import conf
+        for network_name, iface in conf.ifaces.items():
+            friendly = getattr(iface, "name", "").lower()
+            if friendly == name_lower:
+                return network_name
+    except Exception:
+        pass
+
+    # Fallback to the original name if not found
+    return name
