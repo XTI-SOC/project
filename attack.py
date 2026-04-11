@@ -4,7 +4,7 @@ tools/attack_simulator.py
 Generates real attack traffic on loopback (127.0.0.1).
 nfstream captures these flows and your ML pipeline classifies them.
 
-No external machine needed. Runs entirely on your PC.
+Modified to bypass NFStream Quality Filters (>= 4 pkts, >= 10ms duration).
 """
 
 import socket
@@ -16,101 +16,151 @@ import sys
 TARGET = "127.0.0.1"
 
 
+# ── Simple HTTP/Dummy server for realistic attacks ─────────────────────────────
+
+def _start_http_server(port: int = 8080):
+    """Start a minimal HTTP server so HTTP flood gets real responses."""
+    import http.server
+    
+    class QuietHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+        def log_message(self, format, *args): pass
+
+    try:
+        server = http.server.HTTPServer((TARGET, port), QuietHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        print(f"[SERVER] HTTP server started on port {port}")
+        return server
+    except OSError:
+        pass
+    return None
+
+def _start_dummy_listeners(ports: list[int]):
+    """Starts basic TCP listeners so port scans pass the 4-packet filter."""
+    def listener(p):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((TARGET, p))
+            s.listen(5)
+            while True:
+                conn, addr = s.accept()
+                time.sleep(0.01) # Hold for filter duration
+                conn.send(b"X")
+                conn.close()
+        except OSError:
+            pass
+            
+    for p in ports:
+        threading.Thread(target=listener, args=(p,), daemon=True).start()
+    print(f"[SERVER] Dummy listeners running on ports {ports}")
+
 # ── Attack functions ───────────────────────────────────────────────────────────
 
-def syn_flood(count: int = 3000, rate_per_sec: int = 500):
+def syn_flood(count: int = 2000, rate_per_sec: int = 150):
     """
-    Rapid TCP connection attempts without completing handshake.
-    Pattern: high SYN count, low bwd packets, high Flow Pkts/s
-    Matches: DDoS-LOIC-HTTP, DoS-Hulk in CICIDS2018
+    Rapid TCP connection setup and teardown.
+    Because we connect to an open port and sleep 15ms, it generates
+    ~6-8 packets per flow, passing the NFStream filters and hitting 
+    the model as an intense DoS/BruteForce pattern.
     """
-    print(f"\n[SYN FLOOD] {TARGET}:80 | {count} packets | "
-          f"{rate_per_sec} pkt/s")
-
+    print(f"\n[SYN/TCP FLOOD] {TARGET}:8080 | {count} flows | ~{rate_per_sec} fl/s")
     interval = 1.0 / rate_per_sec
     sent = 0
 
-    for i in range(count):
+    def task():
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setblocking(False)
-            s.connect_ex((TARGET, 80))
-            # Do NOT complete handshake — close immediately
+            s.settimeout(0.5)
+            s.connect((TARGET, 8080))
+            # Sleep 15ms minimum to stretch duration > 10ms for NFStream
+            time.sleep(0.015) 
+            # Send a trailing byte for extra packets
+            s.send(b"X")
+            # Force RST instead of full FIN closure
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x01\x00\x00\x00\x00\x00\x00\x00')
             s.close()
-            sent += 1
-            if sent % 500 == 0:
-                print(f"  [{sent}/{count}] SYN packets sent")
-            time.sleep(interval)
         except Exception:
             pass
 
-    print(f"[SYN FLOOD] Done — {sent} sent")
+    for i in range(count):
+        threading.Thread(target=task, daemon=True).start()
+        sent += 1
+        if sent % 500 == 0:
+            print(f"  [{sent}/{count}] TCP/SYN flood attempts launched")
+        time.sleep(interval)
+
+    print(f"[SYN/TCP FLOOD] Done — wait 10s for NFStream active flows to finalize")
 
 
 def udp_flood(count: int = 5000, payload_size: int = 64):
     """
-    High volume UDP packets.
-    Pattern: high packet rate, no ACK/SYN flags, one-directional
-    Matches: DDoS-LOIC-UDP in CICIDS2018
+    High volume UDP packets, slowed down to span 20 seconds.
+    This creates one giant flow that hits NFStream's active_timeout or
+    emits exactly 15s after finishing.
+    Matches: DDoS-LOIC-UDP
     """
-    print(f"\n[UDP FLOOD] {TARGET}:53 | {count} packets | "
-          f"{payload_size}B each")
-
+    print(f"\n[UDP FLOOD] {TARGET}:53 | {count} packets | {payload_size}B each")
+    print("  Note: NFStream will emit this 15-20 seconds AFTER it starts.")
+    
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     payload = b'A' * payload_size
     sent = 0
-
+    # Send 5000 packets over 20 seconds (1 pkt every 4ms)
     try:
         for i in range(count):
             sock.sendto(payload, (TARGET, 53))
             sent += 1
             if sent % 1000 == 0:
                 print(f"  [{sent}/{count}] UDP packets sent")
-            time.sleep(0.0002)  # 5000 pkt/s
+            time.sleep(0.004) 
     finally:
         sock.close()
 
-    print(f"[UDP FLOOD] Done — {sent} sent")
+    print(f"[UDP FLOOD] Done — check terminal in ~15s")
 
 
-def port_scan(start: int = 1, end: int = 1000):
+def port_scan(count_per_port: int = 50):
     """
-    Sequential port scanning.
-    Pattern: many RST responses, sequential ports, short flows
-    Matches: PortScan in CICIDS2018
+    Sequential port scanning of our DUMMY open ports.
+    If we scan closed ports, they produce 2 packets (RST) and fail the filter.
+    Scanning these 5 open dummy ports rapidly satisfies the model's PortScan logic.
     """
-    print(f"\n[PORT SCAN] {TARGET} | ports {start}-{end}")
+    ports = [50000, 50001, 50002, 50003, 50004]
+    print(f"\n[PORT SCAN] {TARGET} | Scanning 5 dummy open ports {count_per_port}x each")
 
     open_ports = []
     scanned = 0
 
-    for port in range(start, end + 1):
+    def task(p):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.02)
-            result = s.connect_ex((TARGET, port))
-            if result == 0:
-                open_ports.append(port)
+            s.settimeout(0.5)
+            if s.connect_ex((TARGET, p)) == 0:
+                time.sleep(0.012) # >10ms filter
+                open_ports.append(p)
             s.close()
-            scanned += 1
-        except Exception:
+        except:
             pass
 
-    print(f"[PORT SCAN] Done — {scanned} ports scanned | "
-          f"Open: {open_ports}")
+    for iteration in range(count_per_port):
+        for port in ports:
+            threading.Thread(target=task, args=(port,), daemon=True).start()
+            scanned += 1
+            time.sleep(0.01)
+
+    print(f"[PORT SCAN] Done — {scanned} scans fired")
 
 
 def http_flood(count: int = 500):
     """
-    Rapid HTTP GET requests.
-    Pattern: high PSH count, port 80, many short TCP flows
-    Matches: DoS-Hulk, DDoS-LOIC-HTTP in CICIDS2018
-
-    Note: needs a listening server on port 80.
-    If nothing is listening, connection refused → still generates
-    TCP RST flows that nfstream captures.
+    Rapid HTTP GET requests to port 8080 (DoS-Hulk).
+    Sleeps 10-15ms internally to bypass duration filter.
     """
-    print(f"\n[HTTP FLOOD] {TARGET}:80 | {count} requests")
+    print(f"\n[HTTP FLOOD] {TARGET}:8080 | {count} requests")
 
     request = (
         b"GET / HTTP/1.1\r\n"
@@ -121,101 +171,68 @@ def http_flood(count: int = 500):
     )
 
     sent = 0
-    for i in range(count):
+    def perform_request():
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.1)
-            s.connect((TARGET, 80))
+            s.settimeout(1.0)
+            s.connect((TARGET, 8080))
             s.send(request)
+            time.sleep(0.012)
+            s.recv(1024) # Pull response so it registers Fwd/Bwd bytes
+            time.sleep(0.005)
             s.close()
-            sent += 1
         except Exception:
             pass
+
+    for i in range(count):
+        threading.Thread(target=perform_request, daemon=True).start()
+        sent += 1
+        if sent % 100 == 0:
+            print(f"  [{sent}/{count}] requests")
         time.sleep(0.002)
 
     print(f"[HTTP FLOOD] Done — {sent} requests")
 
 
-def slow_http_test(count: int = 50, hold_seconds: int = 30):
-    """
-    Slowloris-style attack — open many connections and hold them.
-    Pattern: many long-duration flows, low bytes, high connection count
-    Matches: DoS-Slowloris in CICIDS2018
-    """
-    print(f"\n[SLOWLORIS] {TARGET}:80 | {count} connections | "
-          f"hold {hold_seconds}s")
-
-    sockets = []
-    partial_request = (
-        b"GET / HTTP/1.1\r\n"
-        b"Host: 127.0.0.1\r\n"
-        b"User-Agent: Mozilla/5.0\r\n"
-    )
-    # Deliberately incomplete — no final \r\n
-
-    # Open connections
-    for i in range(count):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(30)
-            s.connect((TARGET, 80))
-            s.send(partial_request)
-            sockets.append(s)
-        except Exception:
-            pass
-
-    print(f"  Opened {len(sockets)} connections, holding for {hold_seconds}s...")
-
-    # Send keep-alive headers periodically
-    end_time = time.time() + hold_seconds
-    while time.time() < end_time:
-        for s in sockets[:]:
-            try:
-                s.send(b"X-Keep-Alive: yes\r\n")
-            except Exception:
-                sockets.remove(s)
-        time.sleep(5)
-
-    # Close all
-    for s in sockets:
-        try: s.close()
-        except: pass
-
-    print(f"[SLOWLORIS] Done")
-
-
-# ── Simple HTTP server for realistic attacks ───────────────────────────────────
-
-def _start_http_server(port: int = 80):
-    """Start a minimal HTTP server so HTTP flood gets real responses."""
-    import http.server
-    import threading
-
-    class QuietHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-        def log_message(self, format, *args):
-            pass  # suppress output
-
+def _botnet():
+    """Periodic small payloads on one long TCP connection (Botnet)."""
+    print(f"\n[BOTNET] {TARGET}:8080 | Keepalive beaconing for 70s")
+    print("  This triggers the 60s active_timeout in NFStream.")
     try:
-        server = http.server.HTTPServer(("127.0.0.1", port), QuietHandler)
-        t = threading.Thread(target=server.serve_forever, daemon=True)
-        t.start()
-        print(f"[SERVER] HTTP server started on port {port}")
-        return server
-    except OSError:
-        print(f"[SERVER] Port {port} in use — HTTP flood will use RST flows")
-        return None
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((TARGET, 8080))
+        for i in range(14):
+            s.send(b'KEEPALIVE_BEACON_64B_PAYLOAD_PADDING_BOTNET_C2_COMMS')
+            print(f"  [Beacon {i+1}/14] sent")
+            time.sleep(5)
+        s.close()
+        print("[BOTNET] Done")
+    except Exception as e:
+        print(f"  Error: {e}")
 
+def _infiltration():
+    """Large payload burst followed by lateral ping-pongs (Infiltration)."""
+    print(f"\n[INFILTRATION] {TARGET}:8080 | Massive drop + Lateral movement")
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((TARGET, 8080))
+        print("  Dropping 2MB payload...")
+        s.send(b'X' * 1024 * 1024 * 2) # 2MB
+        time.sleep(5)
+        print("  Lateral movement commands...")
+        for i in range(5):
+             s.send(b'dir\r\n')
+             time.sleep(1)
+        s.close()
+        print("[INFILTRATION] Done")
+    except Exception as e:
+        print(f"  Error: {e}")
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
-    print("XTI-SOC Attack Simulator (Loopback)")
+    print("XTI-SOC Attack Simulator (NFStream Bypass Edition)")
     print(f"Target: {TARGET}")
     print("=" * 60)
     print()
@@ -223,66 +240,52 @@ def main():
     print("Select interface [7] Software Loopback Interface 1 (127.0.0.1)")
     print()
     print("Select attack:")
-    print("  [1] SYN Flood      — high SYN count, no bwd packets")
-    print("  [2] UDP Flood      — high packet rate, no flags")
-    print("  [3] Port Scan      — many RST responses, sequential ports")
-    print("  [4] HTTP Flood     — high PSH, port 80 (starts local server)")
-    print("  [5] Slowloris      — many long connections, low bytes")
-    print("  [6] Full sequence  — all attacks, best for demo")
+    print("  [1] SYN/TCP Flood  — high flow pkts/s, fast teardown")
+    print("  [2] UDP Flood      — massive continuous UDP datagram stream")
+    print("  [3] Port Scan      — multi-port hit simulating map tools")
+    print("  [4] HTTP Flood     — high PSH, DoS-Hulk simulation")
+    print("  [5] Botnet         — periodic C2 beaconing (Takes 70s)")
+    print("  [6] Infiltration   — massive data drop + lateral movement")
+    print("  [7] Full sequence  — all attacks (Warning: Takes ~3 minutes)")
 
-    choice = input("\nChoice [1-6]: ").strip()
+    # Startup required backing infrastructure
+    _start_http_server(8080)
+    _start_dummy_listeners([50000, 50001, 50002, 50003, 50004])
+
+    choice = input("\nChoice [1-7]: ").strip()
 
     if choice == "1":
-        syn_flood(count=3000, rate_per_sec=500)
-
+        syn_flood(count=2000, rate_per_sec=150)
     elif choice == "2":
         udp_flood(count=5000, payload_size=64)
-
     elif choice == "3":
-        port_scan(start=1, end=1000)
-
+        port_scan(count_per_port=50)
     elif choice == "4":
-        _start_http_server(80)
-        time.sleep(1)
         http_flood(count=500)
-
     elif choice == "5":
-        _start_http_server(80)
-        time.sleep(1)
-        slow_http_test(count=50, hold_seconds=30)
-
+        _botnet()
     elif choice == "6":
-        print("\nFull attack sequence — watch your pipeline terminal\n")
-
-        # Start HTTP server for realistic flows
-        _start_http_server(80)
-        time.sleep(1)
-
+        _infiltration()
+    elif choice == "7":
+        print("\nFull attack sequence starting...\n")
         attacks = [
-            ("SYN Flood (DoS pattern)",
-             lambda: syn_flood(3000, 500)),
-
-            ("UDP Flood (DDoS-LOIC-UDP pattern)",
-             lambda: udp_flood(5000, 64)),
-
-            ("Port Scan (PortScan pattern)",
-             lambda: port_scan(1, 500)),
-
-            ("HTTP Flood (DoS-Hulk pattern)",
-             lambda: http_flood(300)),
+            ("SYN/TCP Flood", lambda: syn_flood(1000, 150)),
+            ("UDP Flood", lambda: udp_flood(2000, 64)),
+            ("Port Scan", lambda: port_scan(30)),
+            ("HTTP Flood", lambda: http_flood(300)),
+            ("Infiltration", _infiltration),
         ]
-
+        
         for name, fn in attacks:
             print(f"\n{'─'*50}")
             print(f"ATTACK: {name}")
             print(f"{'─'*50}")
             fn()
-            print(f"\nWaiting 10s — check your pipeline for MALICIOUS alerts...")
-            time.sleep(10)
+            print(f"\nWaiting 15s to guarantee NFStream processes active flows...")
+            time.sleep(15)
 
         print("\n[DONE] Full sequence complete.")
         print("Check your pipeline terminal for MALICIOUS alerts.")
-
     else:
         print("Invalid choice")
         sys.exit(1)
