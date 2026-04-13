@@ -9,52 +9,10 @@ nfstream handles ALL of:
   - Session tracking (bidirectional 5-tuple flows)
   - Feature computation (statistical_analysis=True)
 
-This file has exactly two jobs:
-  1. flow_to_features(flow)  → np.ndarray (1, 25) float64 | None
-  2. NFStreamEngine           → manages capture thread, emits alert dicts
-
-──────────────────────────────────────────────────────────────────────
-DESIGN DECISIONS (answers to the 8 questions in the prompt)
-──────────────────────────────────────────────────────────────────────
-
-Q1  nfstream version in use: 6.6.0
-    All field names below are verified against the 6.6.0 API.
-
-Q2  statistical_analysis=True is REQUIRED.
-    Without it, piat (packet inter-arrival time) fields are 0-initialised
-    and never computed:
-      bidirectional_mean_piat_ms, src2dst_mean_piat_ms, dst2src_mean_piat_ms
-    accounting_mode and other flags do NOT imply statistical_analysis.
-
-Q3  accounting_mode=0 gives IP-payload bytes — matching CICFlowMeter.
-    Mode 1 = raw bytes (L2 headers included).
-    Mode 2 = tunnelled payload.
-    Always use 0 for CICFlowMeter compatibility.
-
-Q4  flow_to_features() — see implementation below.
-    Edge cases handled:
-      - zero-duration flow  → clamped to 1 µs (1e-6 s) to avoid ÷0
-      - inf / nan anywhere  → return None (flow discarded)
-      - src2dst_bytes == 0  → Down/Up Ratio set to 0.0
-
-Q5  NFStreamEngine — see class below.
-    Alert dict keys are exactly as specified.
-
-Q6  Interface names on Windows:
-    nfstream accepts the SAME NPF GUID names that Scapy uses:
-      \\Device\\NPF_{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}
-    The existing online/interfaces.py (which reads from Scapy's conf.ifaces)
-    returns the correct names — no change needed.
-    nfstream also accepts plain strings like "Ethernet" or "Wi-Fi"
-    (Npcap resolves them) but the NPF GUID form is more reliable.
-
-Q7  Npcap requirement on Windows:
-    nfstream uses WinPcap/Npcap under the hood (via libpcap bindings).
-    Since Npcap is already installed for Scapy, nfstream will use it
-    automatically — NO conflict.  Both live-capture tools share the same
-    Npcap driver.  Do NOT install WinPcap alongside Npcap.
-
-Q8  Validation script: scripts/validate_nfstream.py (see that file).
+This file has exactly three jobs:
+  1. should_whitelist(flow)   → bool (filters out false positives)
+  2. flow_to_features(flow)   → np.ndarray (1, 25) float64 | None
+  3. NFStreamEngine           → manages capture thread, emits alert dicts
 """
 
 import threading
@@ -67,7 +25,7 @@ from online import ml_engine
 
 # ── Feature names — must match artifacts/feature_list.pkl ─────────────────────
 FEATURE_NAMES: list[str] = [
-    'Flow Duration',       # µs  (bidirectional_duration_ms × 1000)
+    'Flow Duration',
     'Tot Fwd Pkts',
     'Tot Bwd Pkts',
     'TotLen Fwd Pkts',
@@ -80,9 +38,9 @@ FEATURE_NAMES: list[str] = [
     'Bwd Pkt Len Mean',
     'Flow Byts/s',
     'Flow Pkts/s',
-    'Flow IAT Mean',       # µs  (bidirectional_mean_piat_ms × 1000)
-    'Fwd IAT Mean',        # µs  (src2dst_mean_piat_ms × 1000)
-    'Bwd IAT Mean',        # µs  (dst2src_mean_piat_ms × 1000)
+    'Flow IAT Mean',
+    'Fwd IAT Mean',
+    'Bwd IAT Mean',
     'Fwd PSH Flags',
     'FIN Flag Cnt',
     'SYN Flag Cnt',
@@ -95,45 +53,53 @@ FEATURE_NAMES: list[str] = [
 ]
 
 
+# ── Whitelist logic ────────────────────────────────────────────────────────────
+
+def should_whitelist(flow) -> bool:
+    """
+    Check if the flow should be whitelisted (ignored) before feature extraction.
+    Returns True for known benign noisy broadcasts/multicasts (DHCP, mDNS, etc).
+    """
+    # DHCP (UDP 67/68, or from 0.0.0.0, or to broadcast 255.255.255.255)
+    if flow.src_port in (67, 68) or flow.dst_port in (67, 68) or \
+       flow.src_ip == "0.0.0.0" or flow.dst_ip == "255.255.255.255":
+        return True
+        
+    # mDNS (Multicast DNS)
+    if flow.dst_ip == "224.0.0.251" or flow.dst_port == 5353:
+        return True
+        
+    # SSDP (Simple Service Discovery Protocol)
+    if flow.dst_ip == "239.255.255.250" or flow.dst_port == 1900:
+        return True
+        
+    # APIPA (Automatic Private IP Addressing)
+    if flow.src_ip.startswith("169.254.") or flow.dst_ip.startswith("169.254."):
+        return True
+        
+    return False
+
+
 # ── Feature extraction ─────────────────────────────────────────────────────────
 
 def flow_to_features(flow) -> np.ndarray | None:
     """
     Convert an nfstream flow object → numpy array shape (1, 25) float64.
-
-    Returns None for flows that should be discarded:
-      - Any inf or nan in the feature vector
-      - Any exception during field access (corrupt / partial flow)
-
-    Parameters
-    ----------
-    flow : nfstream.NFlow
-        A completed flow emitted by NFStreamer (statistical_analysis=True).
-
-    Returns
-    -------
-    np.ndarray | None
-        Shape (1, 25), dtype float64 — ready for ml_engine.predict().
+    Returns None for flows that should be discarded (inf/nan errors).
     """
     try:
-        # ── Duration ──────────────────────────────────────────────────────────
         duration_ms: float = float(flow.bidirectional_duration_ms)
-        # Clamp to 1 µs minimum to avoid division-by-zero for single-packet flows
         duration_s: float = max(duration_ms / 1_000.0, 1e-6)
 
-        # ── Byte counts ───────────────────────────────────────────────────────
         total_bytes:   float = float(flow.bidirectional_bytes)
         total_pkts:    float = float(flow.bidirectional_packets)
         src2dst_bytes: float = float(flow.src2dst_bytes)
         dst2src_bytes: float = float(flow.dst2src_bytes)
 
-        # ── Down/Up Ratio (safe division) ─────────────────────────────────────
-        # CICFlowMeter defines this as bwd_bytes / fwd_bytes
         down_up_ratio: float = (
             dst2src_bytes / src2dst_bytes if src2dst_bytes > 0 else 0.0
         )
 
-        # ── Feature vector (exact order matches FEATURE_NAMES) ────────────────
         values: list[float] = [
             duration_ms * 1_000.0,                          # Flow Duration (µs)
             float(flow.src2dst_packets),                    # Tot Fwd Pkts
@@ -164,7 +130,6 @@ def flow_to_features(flow) -> np.ndarray | None:
 
         arr = np.array(values, dtype=np.float64)
 
-        # ── Sanity check ──────────────────────────────────────────────────────
         if np.any(np.isinf(arr)):
             print(f"[DEBUG] Skipping flow due to inf in features: {np.where(np.isinf(arr))[0]}")
             return None
@@ -183,38 +148,26 @@ def flow_to_features(flow) -> np.ndarray | None:
 
 # ── Alert builder ──────────────────────────────────────────────────────────────
 
-def _build_alert(flow, ml_class: str, ml_prob: float) -> dict:
+def _build_alert(flow, ml_class: str, attack_type: str, ml_prob: float, shap_explanation: list[dict] | None) -> dict:
     """
     Build an alert dict from a completed nfstream flow + ML prediction.
-
-    Keys are identical to the Scapy-era alert_queue._build_alert() output
-    so downstream consumers (Phase 3 SHAP, Phase 4 CTI, Phase 5 API) are
-    unaffected by the capture-layer swap.
     """
     return {
-        # 5-tuple identity
         "src_ip":           flow.src_ip,
         "dst_ip":           flow.dst_ip,
         "src_port":         flow.src_port,
         "dst_port":         flow.dst_port,
-        "protocol":         str(flow.protocol),          # "6"=TCP, "17"=UDP …
-
-        # Timing
-        "timestamp":        flow.bidirectional_last_seen_ms / 1_000.0,  # Unix s
+        "protocol":         str(flow.protocol),
+        "timestamp":        flow.bidirectional_last_seen_ms / 1_000.0,
         "duration_s":       flow.bidirectional_duration_ms  / 1_000.0,
-
-        # ML result
-        "ml_class":         ml_class,        # "BENIGN" | "MALICIOUS"
-        "ml_probability":   ml_prob,         # float [0.0, 1.0]
-
-        # Flow metadata
-        "close_reason":     "nfstream",      # fixed; nfstream manages expiry
+        "ml_class":         ml_class,
+        "attack_type":      attack_type,
+        "ml_probability":   ml_prob,
+        "shap_explanation": shap_explanation,
+        "close_reason":     "nfstream",
         "fwd_packets":      flow.src2dst_packets,
         "bwd_packets":      flow.dst2src_packets,
         "total_bytes":      flow.bidirectional_bytes,
-
-        # Phase 3-5 placeholders
-        "shap_explanation": None,            # Phase 3
         "cti_data":         None,            # Phase 4
         "alert_id":         None,            # Phase 5
         "risk_score":       None,            # Phase 5
@@ -228,8 +181,9 @@ _stats: dict = {
     "total_flows":         0,
     "malicious_count":     0,
     "benign_count":        0,
-    "skipped_errors":      0,   # flows discarded by flow_to_features due to inf/nan
-    "filtered_microflows": 0,   # flows dropped by quality thresholds
+    "skipped_errors":      0,
+    "filtered_microflows": 0,
+    "whitelisted":         0,
 }
 
 
@@ -251,71 +205,20 @@ def reset_stats() -> None:
 class NFStreamEngine:
     """
     Live-capture engine: wraps nfstream.NFStreamer in a daemon thread.
-
-    Usage
-    -----
-    from online.nfstream_engine import NFStreamEngine
-    from online.alert_queue    import alert_queue
-
-    engine = NFStreamEngine(output_queue=alert_queue)
-    engine.start(interface=r"\\Device\\NPF_{...}")   # same name Scapy uses
-    # … generate traffic …
-    engine.stop()
-
-    Interface names (Windows)
-    -------------------------
-    nfstream accepts the NPF GUID strings returned by online/interfaces.py
-    (e.g. \\Device\\NPF_{A1B2C3D4-...}).  Npcap — already installed for
-    Scapy — is used automatically with NO conflict.
-
-    nfstream parameters
-    -------------------
-    statistical_analysis=True   REQUIRED for piat (inter-arrival time) fields.
-    accounting_mode=0           IP-payload bytes → matches CICFlowMeter.
-    NFSTREAM QUALITY FILTERS
-    ------------------------
-    MIN_PACKETS = 4
-        Blinds the IDS to SYN Floods (1 pkt/flow) and Port Scans (2 pkts/flow).
-        But effectively removes noisy background micro-flows (DNS droppings, 
-        spurious RSTs, and orphaned FINs).
-    MIN_DURATION_S = 0.01 (10ms)
-        Ensures temporal features (IAT, Byts/s) are not inf/nan.
     """
 
     MIN_PACKETS = 4
     MIN_DURATION_S = 0.01
 
     def __init__(self, output_queue) -> None:
-        """
-        Parameters
-        ----------
-        output_queue : queue.Queue
-            Where completed alert dicts are placed (e.g. alert_queue.alert_queue).
-        """
         self._output_queue = output_queue
         self._stop_flag    = threading.Event()
         self._thread: threading.Thread | None = None
         self._interface: str = ""
 
     def start(self, interface: str) -> None:
-        """
-        Start live capture on *interface* in a background daemon thread.
-
-        Parameters
-        ----------
-        interface : str
-            NPF GUID (Windows) or OS name (Linux).
-            Get from online.interfaces.get_interfaces()["name"].
-
-        Raises
-        ------
-        RuntimeError
-            If capture is already running.
-        """
         if self._thread is not None and self._thread.is_alive():
-            raise RuntimeError(
-                "NFStreamEngine is already running. Call stop() first."
-            )
+            raise RuntimeError("NFStreamEngine is already running. Call stop() first.")
 
         self._stop_flag.clear()
         from online.interfaces import resolve_interface_name
@@ -329,40 +232,24 @@ class NFStreamEngine:
         self._thread.start()
         print(f"[NFSTREAM] Capture started on: {self._interface}")
 
-
     def stop(self) -> None:
-        """
-        Signal the capture thread to stop after the current flow.
-
-        nfstream iterates lazily — the thread will exit at the next
-        flow boundary (when idle_timeout fires for the last active flow).
-        For immediate shutdown, the process termination is the cleanest path.
-        """
         self._stop_flag.set()
         print("[NFSTREAM] Stop requested. Waiting for current flow to expire…")
 
     @property
     def is_running(self) -> bool:
-        """True if the capture thread is alive."""
         return self._thread is not None and self._thread.is_alive()
 
     def _capture_loop(self) -> None:
-        """
-        Main capture loop — runs in daemon thread.
-
-        Creates an NFStreamer, iterates over completed flows, converts each
-        flow to a feature vector, runs ML inference, and puts the alert dict
-        on the output queue.
-        """
         try:
             streamer = nfstream.NFStreamer(
                 source=self._interface,
-                statistical_analysis=True,   # REQUIRED for piat fields
-                accounting_mode=0,           # IP-payload bytes (CICFlowMeter)
-                idle_timeout=15,             # seconds; lowered to 15s so you don't wait forever
-                active_timeout=60,           # seconds; hard cap for long flows
+                statistical_analysis=True,
+                accounting_mode=0,
+                idle_timeout=15,
+                active_timeout=60,
                 promiscuous_mode=True,
-                n_meters=1,                  # forces single process to avoid 8x model loading
+                n_meters=1,
             )
         except Exception as e:
             print(f"[NFSTREAM ERROR] Failed to open interface '{self._interface}': {e}")
@@ -378,21 +265,23 @@ class NFStreamEngine:
             with _stats_lock:
                 _stats["total_flows"] += 1
 
-            # ── 1. Quality Filters (BEFORE feature extraction) ────────────────
+            # ── 1. Quality Filters ───────────────────────────────────────────────
             duration_s = flow.bidirectional_duration_ms / 1000.0
             
-            # Additional check: src2dst_packets == 0 means no forward direction at all
             if (flow.bidirectional_packets < self.MIN_PACKETS or 
                 duration_s < self.MIN_DURATION_S or
                 flow.src2dst_packets == 0):
                 with _stats_lock:
                     _stats["filtered_microflows"] += 1
-                # Stay completely silent for filtered micro-flows to avoid terminal spam
+                continue
+                
+            if should_whitelist(flow):
+                with _stats_lock:
+                    _stats["whitelisted"] += 1
                 continue
 
             # ── 2. Feature extraction ────────────────────────────────────────────
             vec = flow_to_features(flow)
-
             if vec is None:
                 with _stats_lock:
                     _stats["skipped_errors"] += 1
@@ -400,19 +289,24 @@ class NFStreamEngine:
 
             # ── 3. ML inference ──────────────────────────────────────────────────
             try:
-                ml_class, ml_prob = ml_engine.predict(vec)
+                binary_class, attack_type, ml_prob = ml_engine.predict(vec)
+                
+                if binary_class == "MALICIOUS":
+                    shap_exp = ml_engine.get_shap_explanation(vec)
+                else:
+                    shap_exp = None
             except Exception as e:
                 print(f"[NFSTREAM ML ERROR] {e}")
                 with _stats_lock:
                     _stats["skipped_errors"] += 1
                 continue
 
-            # ── Build & emit alert ────────────────────────────────────────────
-            alert = _build_alert(flow, ml_class, ml_prob)
+            # ── Build & emit alert ───────────────────────────────────────────────
+            alert = _build_alert(flow, binary_class, attack_type, ml_prob, shap_exp)
             self._output_queue.put(alert)
 
             with _stats_lock:
-                if ml_class == "MALICIOUS":
+                if binary_class == "MALICIOUS":
                     _stats["malicious_count"] += 1
                 else:
                     _stats["benign_count"] += 1
@@ -420,7 +314,7 @@ class NFStreamEngine:
             print(
                 f"[NFSTREAM] {flow.src_ip}:{flow.src_port} → "
                 f"{flow.dst_ip}:{flow.dst_port} | "
-                f"{ml_class} (p={ml_prob:.3f})"
+                f"{binary_class} ({attack_type}) [p={ml_prob:.3f}]"
             )
 
         print("[NFSTREAM] Capture loop exited.")
