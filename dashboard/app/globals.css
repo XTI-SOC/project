@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme {
+  --color-on-tertiary-fixed: #000000;
+  --color-on-surface-variant: #91aaeb;
+  --color-on-background: #dee5ff;
+  --color-primary-fixed: #d8e2ff;
+  --color-on-secondary-fixed: #324054;
+  --color-on-error: #490106;
+  --color-error-dim: #bb5551;
+  --color-on-tertiary: #490005;
+  --color-on-primary-fixed-variant: #0057bd;
+  --color-surface-bright: #002867;
+  --color-on-error-container: #ff9993;
+  --color-on-primary: #003d88;
+  --color-on-primary-container: #bdd0ff;
+  --color-secondary-fixed: #d5e3fd;
+  --color-inverse-primary: #005bc4;
+  --color-tertiary-container: #fd4e4d;
+  --color-error-container: #7f2927;
+  --color-surface-container-low: #06122d;
+  --color-surface-container-lowest: #000000;
+  --color-secondary-container: #2e3c50;
+  --color-inverse-on-surface: #4d556b;
+  --color-tertiary-fixed: #fd4e4d;
+  --color-tertiary-fixed-dim: #ec4142;
+  --color-on-tertiary-fixed-variant: #3b0003;
+  --color-on-primary-fixed: #003c86;
+  --color-on-secondary: #122133;
+  --color-inverse-surface: #faf8ff;
+  --color-surface-container: #05183c;
+  --color-primary-container: #004395;
+  --color-on-tertiary-container: #1f0001;
+  --color-background: #060e20;
+  --color-secondary: #909fb6;
+  --color-surface-variant: #00225a;
+  --color-surface-container-highest: #00225a;
+  --color-error: #ee7d77;
+  --color-secondary-dim: #909fb6;
+  --color-surface: #060e20;
+  --color-on-secondary-fixed-variant: #4e5c71;
+  --color-tertiary-dim: #ff716a;
+  --color-surface-dim: #060e20;
+  --color-primary-fixed-dim: #c3d4ff;
+  --color-outline-variant: #2b4680;
+  --color-surface-tint: #adc6ff;
+  --color-surface-container-high: #031d4b;
+  --color-tertiary: #ff716a;
+  --color-secondary-fixed-dim: #c7d5ee;
+  --color-primary: #adc6ff;
+  --color-outline: #5b74b1;
+  --color-on-secondary-container: #b2c0d9;
+  --color-primary-dim: #98b8ff;
+  --color-on-surface: #dee5ff;
+
+  --font-headline: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-label: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
+@layer utilities {
+  .pulse-red {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}

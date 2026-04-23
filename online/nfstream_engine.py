@@ -21,6 +21,7 @@ import numpy as np
 import nfstream
 
 from online import ml_engine
+from online.cti_cache import enrich_alert
 
 
 # ── Feature names — must match artifacts/feature_list.pkl ─────────────────────
@@ -303,6 +304,13 @@ class NFStreamEngine:
 
             # ── Build & emit alert ───────────────────────────────────────────────
             alert = _build_alert(flow, binary_class, attack_type, ml_prob, shap_exp)
+            
+            alert = enrich_alert(alert)
+
+            # Only queue alerts that are not NO_ALERT
+            if (alert.get("cti_data") or {}).get("alert_type") == "NO_ALERT":
+                continue
+                
             self._output_queue.put(alert)
 
             with _stats_lock:
