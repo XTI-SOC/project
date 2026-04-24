@@ -78,10 +78,15 @@ def _load_artifacts() -> None:
     else:
         raise AttributeError(f"Scaler {scaler_type} has unknown attributes")
         
-    # Load binary explainer
-    with open(_EXPLAINER_PATH, 'rb') as f:
-        EXPLAINER = pickle.load(f)
-    print(f"  [OK] Binary Explainer: {type(EXPLAINER).__name__}")
+    # Load binary explainer (graceful: SHAP may fail on Python 3.13)
+    try:
+        with open(_EXPLAINER_PATH, 'rb') as f:
+            EXPLAINER = pickle.load(f)
+        print(f"  [OK] Binary Explainer: {type(EXPLAINER).__name__}")
+    except Exception as e:
+        EXPLAINER = None
+        print(f"  [WARNING] SHAP Explainer failed to load (Python version mismatch): {e}")
+        print(f"  [WARNING] SHAP explanations will be disabled. Re-serialize explainer.pkl to fix.")
     
     # Load feature list
     with open(_FEATURES_PATH, 'rb') as f:
@@ -172,22 +177,22 @@ def get_shap_explanation(feature_vector: np.ndarray) -> list[dict]:
         Top 5 features sorted by absolute shap_value descending.
         [{"feature": str, "shap_value": float}, ...]
     """
-    scaled = SCALER.transform(feature_vector)
-    
-    # EXPLAINER.shap_values for binary XGBClassifier returns shape (n_samples, n_features)
-    shap_values = EXPLAINER.shap_values(scaled)
-    vals = shap_values[0]
-    
-    # Sort top 5 by absolute value, descendingly
-    indices = np.argsort(np.abs(vals))[::-1][:5]
-    
-    result = []
-    for idx in indices:
-        result.append({
-            "feature": FEATURE_LIST[idx],
-            "shap_value": float(vals[idx])
-        })
-    return result
+    if EXPLAINER is None:
+        return []
+    try:
+        scaled = SCALER.transform(feature_vector)
+        shap_values = EXPLAINER.shap_values(scaled)
+        vals = shap_values[0]
+        indices = np.argsort(np.abs(vals))[::-1][:5]
+        result = []
+        for idx in indices:
+            result.append({
+                "feature": FEATURE_LIST[idx],
+                "shap_value": float(vals[idx])
+            })
+        return result
+    except Exception:
+        return []
 
 
 def get_feature_names() -> list[str]:

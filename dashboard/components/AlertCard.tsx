@@ -77,10 +77,10 @@ export function AlertCard({ alert: a }: { alert: Alert }) {
     <div className={`bg-surface-container-high border-l-[4px] ${borderColor} rounded-sm overflow-hidden flex flex-col md:flex-row shadow-xl hover:bg-surface-container-highest transition-colors`}>
       <div className="p-6 md:w-1/4 border-r border-outline-variant/10">
         <div className="flex gap-2 mb-4">
-          <span className={`${cti?.alert_type === "ML_CTI" ? "bg-error/20 text-error border-error/30" : "bg-[#f97316]/20 text-[#f97316] border-[#f97316]/30"} px-2 py-0.5 text-[9px] font-bold rounded-sm border uppercase tracking-tighter`}>
-            {cti?.alert_type === "ML_CTI" ? "ML+CTI" : "ML ONLY"}
+          <span className={`${cti?.alert_type === "ML_CTI" ? "bg-error/20 text-error border-error/30" : cti?.alert_type === "CORRELATION" ? "bg-blue-500/20 text-blue-400 border-blue-500/30" : cti?.alert_type === "RULE_BASED" ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/30" : "bg-[#f97316]/20 text-[#f97316] border-[#f97316]/30"} px-2 py-0.5 text-[9px] font-bold rounded-sm border uppercase tracking-tighter`}>
+            {cti?.alert_type === "ML_CTI" ? "ML+CTI" : cti?.alert_type === "CORRELATION" ? "CORRELATION" : cti?.alert_type === "RULE_BASED" ? "RULE-BASED" : "ML ONLY"}
           </span>
-          <span className={`${a.attack_type === "DDoS" ? "bg-error text-on-error" : "bg-purple-900/40 text-purple-400 border border-purple-500/30"} px-2 py-0.5 text-[9px] font-bold rounded-sm uppercase tracking-tighter`}>
+          <span className={`${a.attack_type === "DDoS" || a.attack_type === "Volumetric Flood" ? "bg-error text-on-error" : "bg-purple-900/40 text-purple-400 border border-purple-500/30"} px-2 py-0.5 text-[9px] font-bold rounded-sm uppercase tracking-tighter`}>
             {a.attack_type}
           </span>
         </div>

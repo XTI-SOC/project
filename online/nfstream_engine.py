@@ -17,11 +17,13 @@ This file has exactly three jobs:
 
 import threading
 import time
+import uuid
 import numpy as np
 import nfstream
 
 from online import ml_engine
 from online.cti_cache import enrich_alert
+from online.correlation_engine import CorrelationEngine
 
 
 # ── Feature names — must match artifacts/feature_list.pkl ─────────────────────
@@ -76,6 +78,16 @@ def should_whitelist(flow) -> bool:
         
     # APIPA (Automatic Private IP Addressing)
     if flow.src_ip.startswith("169.254.") or flow.dst_ip.startswith("169.254."):
+        return True
+
+    # Windows Update Delivery Optimization (WUDO) — port 7680
+    # Causes false Port Scan alerts as Windows connects to many peers
+    if flow.src_port == 7680 or flow.dst_port == 7680:
+        return True
+
+    # DNS queries (port 53) — filtered here to prevent false DNS Flooding
+    # from normal browsing. Real DNS flood attacks come from external attackers.
+    if flow.dst_port == 53 or flow.src_port == 53:
         return True
         
     return False
@@ -208,30 +220,38 @@ class NFStreamEngine:
     Live-capture engine: wraps nfstream.NFStreamer in a daemon thread.
     """
 
-    MIN_PACKETS = 4
-    MIN_DURATION_S = 0.01
+    MIN_PACKETS = 2
+    MIN_DURATION_S = 0.001
 
     def __init__(self, output_queue) -> None:
         self._output_queue = output_queue
         self._stop_flag    = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread_a: threading.Thread | None = None
+        self._thread_b: threading.Thread | None = None
         self._interface: str = ""
+        self._correlation_engine = CorrelationEngine(output_queue)
 
     def start(self, interface: str) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if self._thread_a is not None and self._thread_a.is_alive():
             raise RuntimeError("NFStreamEngine is already running. Call stop() first.")
 
         self._stop_flag.clear()
         from online.interfaces import resolve_interface_name
         self._interface = resolve_interface_name(interface)
 
-        self._thread = threading.Thread(
-            target=self._capture_loop,
-            name="nfstream-capture",
+        self._thread_a = threading.Thread(
+            target=self._capture_loop_a,
+            name="nfstream-capture-a",
             daemon=True,
         )
-        self._thread.start()
-        print(f"[NFSTREAM] Capture started on: {self._interface}")
+        self._thread_b = threading.Thread(
+            target=self._capture_loop_b,
+            name="nfstream-capture-b",
+            daemon=True,
+        )
+        self._thread_a.start()
+        self._thread_b.start()
+        print(f"[NFSTREAM] Capture A & B started on: {self._interface}")
 
     def stop(self) -> None:
         self._stop_flag.set()
@@ -239,9 +259,10 @@ class NFStreamEngine:
 
     @property
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        return (self._thread_a is not None and self._thread_a.is_alive()) or \
+               (self._thread_b is not None and self._thread_b.is_alive())
 
-    def _capture_loop(self) -> None:
+    def _capture_loop_a(self) -> None:
         try:
             streamer = nfstream.NFStreamer(
                 source=self._interface,
@@ -281,6 +302,21 @@ class NFStreamEngine:
                     _stats["whitelisted"] += 1
                 continue
 
+            # ── Skip outbound flows from this machine ────────────────────────────
+            # Outbound HTTPS/DNS (src=local → dst=internet) produces false positive
+            # "Infiltration" and "DNS Flooding" detections from normal browsing.
+            # We only alert on INBOUND or LATERAL flows (attacker → our machine).
+            local_prefixes = ("10.", "192.168.", "172.", "127.")
+            src_is_local = any(flow.src_ip.startswith(p) for p in local_prefixes)
+            dst_is_local = any(flow.dst_ip.startswith(p) for p in local_prefixes)
+            if src_is_local and not dst_is_local:
+                with _stats_lock:
+                    _stats["whitelisted"] += 1
+                continue
+
+            # ── Send to correlation engine (only inbound/lateral traffic) ─────────
+            self._correlation_engine.add_flow(flow)
+
             # ── 2. Feature extraction ────────────────────────────────────────────
             vec = flow_to_features(flow)
             if vec is None:
@@ -319,10 +355,63 @@ class NFStreamEngine:
                 else:
                     _stats["benign_count"] += 1
 
-            print(
-                f"[NFSTREAM] {flow.src_ip}:{flow.src_port} → "
-                f"{flow.dst_ip}:{flow.dst_port} | "
-                f"{binary_class} ({attack_type}) [p={ml_prob:.3f}]"
-            )
+            if binary_class != "BENIGN":
+                print(
+                    f"[NFSTREAM] {flow.src_ip}:{flow.src_port} → "
+                    f"{flow.dst_ip}:{flow.dst_port} | "
+                    f"{binary_class} ({attack_type}) [p={ml_prob:.3f}]"
+                )
 
-        print("[NFSTREAM] Capture loop exited.")
+        print("[NFSTREAM] Capture loop A exited.")
+
+    def _capture_loop_b(self) -> None:
+        try:
+            streamer = nfstream.NFStreamer(
+                source=self._interface,
+                statistical_analysis=True,
+                accounting_mode=0,
+                idle_timeout=15,
+                active_timeout=60,
+                promiscuous_mode=True,
+                n_meters=1,
+            )
+        except Exception as e:
+            return
+
+        print(f"[NFSTREAM B] Streaming flows from '{self._interface}'…")
+
+        for flow in streamer:
+            if self._stop_flag.is_set():
+                break
+
+            # Streamer B: Rule-based only. No ML.
+            # Look for port scans (e.g. 1-2 packets max, containing SYN)
+            if flow.bidirectional_packets <= 2 and getattr(flow, 'bidirectional_syn_packets', 0) > 0:
+                alert = {
+                    "src_ip": flow.src_ip,
+                    "dst_ip": flow.dst_ip,
+                    "src_port": flow.src_port,
+                    "dst_port": flow.dst_port,
+                    "protocol": str(flow.protocol),
+                    "timestamp": flow.bidirectional_last_seen_ms / 1000.0,
+                    "duration_s": flow.bidirectional_duration_ms / 1000.0,
+                    "ml_class": "MALICIOUS",
+                    "attack_type": "Port Scan",
+                    "ml_probability": 1.0,
+                    "shap_explanation": None,
+                    "close_reason": "nfstream-b",
+                    "fwd_packets": flow.src2dst_packets,
+                    "bwd_packets": flow.dst2src_packets,
+                    "total_bytes": flow.bidirectional_bytes,
+                    "cti_data": {
+                        "alert_type": "RULE_BASED",
+                        "abuse_score": 0,
+                        "country": "LOCAL",
+                        "cti_status": "done"
+                    },
+                    "alert_id": str(uuid.uuid4()),
+                    "risk_score": 70.0
+                }
+                self._output_queue.put(alert)
+
+        print("[NFSTREAM B] Capture loop B exited.")

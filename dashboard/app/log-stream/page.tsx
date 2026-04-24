@@ -12,12 +12,35 @@ export default function LogStreamPage() {
   useEffect(() => {
     fetchAlerts(50).then(setAlerts).catch(console.error)
 
-    const ws = new WebSocket(WS_URL)
-    ws.onmessage = (e) => {
-      const incoming: Alert = JSON.parse(e.data)
-      setAlerts(prev => [incoming, ...prev].slice(0, 100))
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connectWebSocket = () => {
+      ws = new WebSocket(WS_URL)
+      
+      ws.onclose = () => {
+        reconnectTimeout = setTimeout(connectWebSocket, 2000)
+      }
+      
+      ws.onerror = () => {
+        ws?.close()
+      }
+      
+      ws.onmessage = (e) => {
+        const incoming: Alert = JSON.parse(e.data)
+        setAlerts(prev => [incoming, ...prev].slice(0, 100))
+      }
     }
-    return () => ws.close()
+
+    connectWebSocket()
+
+    return () => {
+      clearTimeout(reconnectTimeout)
+      if (ws) {
+        ws.onclose = null // prevent reconnect on unmount
+        ws.close()
+      }
+    }
   }, [])
 
   // Map alerts to terminal logs
@@ -63,16 +86,20 @@ export default function LogStreamPage() {
             </div>
             <div className="grid grid-cols-3 gap-2 mt-2">
                 <div className="bg-surface-container-low p-2 rounded-sm border border-outline-variant/10">
-                    <p className="text-[10px] text-on-surface-variant font-label uppercase">PPS</p>
-                    <p className="font-headline text-lg font-medium text-primary">14.2K</p>
+                    <p className="text-[10px] text-on-surface-variant font-label uppercase">AVG RISK (LIVE)</p>
+                    <p className="font-headline text-lg font-medium text-primary">
+                      {alerts.length > 0 ? (alerts.reduce((acc, a) => acc + (a.risk_score || 0), 0) / alerts.length).toFixed(1) : "0.0"}
+                    </p>
                 </div>
                 <div className="bg-surface-container-low p-2 rounded-sm border border-outline-variant/10">
-                    <p className="text-[10px] text-on-surface-variant font-label uppercase">FLOWS</p>
+                    <p className="text-[10px] text-on-surface-variant font-label uppercase">TOTAL EVENTS</p>
                     <p className="font-headline text-lg font-medium text-tertiary">{alerts.length}</p>
                 </div>
                 <div className="bg-surface-container-low p-2 rounded-sm border border-outline-variant/10">
-                    <p className="text-[10px] text-on-surface-variant font-label uppercase">UPTIME</p>
-                    <p className="font-headline text-lg font-medium text-secondary">04:12:09</p>
+                    <p className="text-[10px] text-on-surface-variant font-label uppercase">LAST EVENT</p>
+                    <p className="font-headline text-lg font-medium text-secondary">
+                      {alerts.length > 0 ? new Date(alerts[0].timestamp * 1000).toLocaleTimeString([], { hour12: false }) : "--:--:--"}
+                    </p>
                 </div>
             </div>
         </section>
@@ -111,11 +138,11 @@ export default function LogStreamPage() {
 
             <div className="bg-surface-container-high/80 backdrop-blur-sm px-4 py-1.5 flex items-center justify-between border-t border-outline-variant/20 z-10">
                 <div className="flex items-center gap-3">
-                    <span className="font-mono text-[9px] text-primary uppercase">Packets: 4,521,092</span>
-                    <span className="font-mono text-[9px] text-tertiary uppercase">Dropped: 0.02%</span>
+                    <span className="font-mono text-[9px] text-primary uppercase">Events Streamed: {alerts.length}</span>
+                    <span className="font-mono text-[9px] text-tertiary uppercase">Dropped: 0.00%</span>
                 </div>
                 <div className="flex flex-1 items-center justify-end gap-1">
-                    <span className="font-mono text-[9px] text-secondary uppercase">Buffer: 4%</span>
+                    <span className="font-mono text-[9px] text-secondary uppercase">Buffer: OK</span>
                 </div>
             </div>
         </div>

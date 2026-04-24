@@ -3,7 +3,8 @@ import queue
 import json
 import threading
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Depends, HTTPException, Security, Query
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,15 @@ async def _broadcast(message: str):
 def _broadcast_sync(message: str, loop):
     asyncio.run_coroutine_threadsafe(_broadcast(message), loop)
 
+_API_KEY = "xti_soc_secure_2024"
+_API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=_API_KEY_NAME, auto_error=False)
+
+def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key != _API_KEY:
+        raise HTTPException(status_code=403, detail="Could not validate API key")
+    return api_key
+
 def _processing_worker(loop):
     while True:
         try:
@@ -49,6 +59,12 @@ def _processing_worker(loop):
         except queue.Empty:
             continue
             
+        # DROP BENIGN TRAFFIC
+        is_benign = alert.get("ml_class") == "BENIGN" and alert.get("attack_type") == "BENIGN"
+        cti = alert.get("cti_data") or {}
+        if is_benign and cti.get("alert_type") != "CTI_ONLY":
+            continue
+
         try:
             save_alert(alert)
             _server_stats["saved"] += 1
@@ -69,22 +85,39 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi import Request
+
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="XTI-SOC", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://10.20.42.183:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
 @app.get("/alerts")
-def read_alerts(limit: int = 50):
+@limiter.limit("100/minute")
+def read_alerts(request: Request, limit: int = 50, api_key: str = Depends(verify_api_key)):
     return get_recent_alerts(limit)
 
 @app.get("/stats")
-def read_stats():
+@limiter.limit("60/minute")
+def read_stats(request: Request, api_key: str = Depends(verify_api_key)):
     db_stats = get_stats()
     engine_stats = get_engine_stats()
     cti_stats = get_cti_stats()
@@ -96,14 +129,19 @@ def read_stats():
     }
 
 @app.get("/health")
-def health():
+@limiter.limit("10/minute")
+def health(request: Request):
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 @app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket):
+async def ws_endpoint(websocket: WebSocket, token: str = Query(None)):
+    if token != _API_KEY:
+        await websocket.close(code=1008)
+        return
+        
     await websocket.accept()
     _ws_clients.add(websocket)
     try:

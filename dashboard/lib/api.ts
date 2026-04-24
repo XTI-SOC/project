@@ -1,5 +1,6 @@
-export const API_BASE = "http://localhost:8000"
-export const WS_URL   = "ws://localhost:8000/ws"
+export const API_BASE = "http://127.0.0.1:8000"
+export const API_KEY  = "xti_soc_secure_2024"
+export const WS_URL   = `ws://127.0.0.1:8000/ws?token=${API_KEY}`
 
 export interface ShapFeature {
   feature: string
@@ -10,7 +11,7 @@ export interface CtiData {
   abuse_score:    number | null
   country:        string | null
   total_reports:  number | null
-  alert_type:     "ML_CTI" | "ML_ONLY" | "CTI_ONLY" | "NO_ALERT"
+  alert_type:     "ML_CTI" | "ML_ONLY" | "CTI_ONLY" | "NO_ALERT" | "CORRELATION" | "RULE_BASED"
   risk_score:     number
   lookup_ip:      string | null
   cti_status:     "pending" | "done"
@@ -38,24 +39,34 @@ export interface Alert {
 }
 
 export interface Stats {
-  total:          number
-  malicious:      number
-  benign_flagged: number
-  high:           number
-  medium:         number
-  low:            number
-  pending_cti:    number
+  db: {
+    total: number
+    malicious: number
+    benign_flagged: number
+    high: number
+    medium: number
+    low: number
+    pending_cti: number
+    size_mb: number
+  }
+  engine: any
+  cti: any
+  server: any
 }
 
 export async function fetchAlerts(limit = 50): Promise<Alert[]> {
-  const res = await fetch(`${API_BASE}/alerts?limit=${limit}`)
+  const res = await fetch(`${API_BASE}/alerts?limit=${limit}`, {
+    headers: { "X-API-Key": API_KEY }
+  })
   if (!res.ok) throw new Error("Failed to fetch alerts")
   return res.json()
 }
 
 // Keeping this for generic use, but we will use SWR in components to fetch it
 export async function fetchStats(url: string = `${API_BASE}/stats`): Promise<Stats> {
-  const res = await fetch(url)
+  const res = await fetch(url, {
+    headers: { "X-API-Key": API_KEY }
+  })
   if (!res.ok) throw new Error("Failed to fetch stats")
   return res.json()
 }

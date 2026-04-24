@@ -52,11 +52,11 @@ def save_alert(alert: dict) -> str:
     cti = alert.get("cti_data") or {}
     alert_type = cti.get("alert_type", "NO_ALERT")
     
-    if alert_type == "ML_CTI":
+    if alert_type == "ML_CTI" or alert_type == "ARP_ANOMALY":
         confidence = "high"
-    elif alert_type == "ML_ONLY":
+    elif alert_type in ("ML_ONLY", "CORRELATION"):
         confidence = "medium"
-    elif alert_type == "CTI_ONLY":
+    elif alert_type in ("CTI_ONLY", "RULE_BASED"):
         confidence = "low"
     else:
         confidence = "medium"
@@ -111,11 +111,11 @@ def update_cti(alert_id: str, alert: dict) -> None:
     cti = alert.get("cti_data") or {}
     alert_type = cti.get("alert_type", "NO_ALERT")
     
-    if alert_type == "ML_CTI":
+    if alert_type == "ML_CTI" or alert_type == "ARP_ANOMALY":
         confidence = "high"
-    elif alert_type == "ML_ONLY":
+    elif alert_type in ("ML_ONLY", "CORRELATION"):
         confidence = "medium"
-    elif alert_type == "CTI_ONLY":
+    elif alert_type in ("CTI_ONLY", "RULE_BASED"):
         confidence = "low"
     else:
         confidence = "medium"
@@ -197,6 +197,10 @@ def get_stats() -> dict:
             FROM alerts
         """)
         row = cursor.fetchone()
+        
+        import os
+        size_mb = os.path.getsize(_db_path) / (1024 * 1024) if os.path.exists(_db_path) else 0
+        
         return {
             "total": row[0] or 0,
             "malicious": row[1] or 0,
@@ -205,6 +209,7 @@ def get_stats() -> dict:
             "medium": row[4] or 0,
             "low": row[5] or 0,
             "pending_cti": row[6] or 0,
+            "size_mb": size_mb
         }
     finally:
         conn.close()

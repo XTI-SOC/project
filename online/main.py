@@ -10,9 +10,13 @@ import sys
 import threading
 import time
 import uvicorn
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from online.interfaces import get_interfaces, get_default_interface
 from online.nfstream_engine import NFStreamEngine
+from online.arp_monitor import ARPMonitor
 from online.alert_queue import alert_queue
 
 def _pick_interface() -> str:
@@ -53,6 +57,9 @@ def main() -> None:
 
     engine = NFStreamEngine(output_queue=alert_queue)
     engine.start(interface=iface)
+
+    arp_monitor = ARPMonitor(alert_queue=alert_queue, interface=iface)
+    arp_monitor.start()
 
     print(f"\n✅ Capture started on {iface}")
     print("🔌 API server: http://localhost:8000")

@@ -31,21 +31,25 @@ export default function ForensicsPage() {
                             <stop offset="100%" style={{stopColor: "#adc6ff", stopOpacity: 0}}></stop>
                         </radialGradient>
                     </defs>
-                    <path d="M400 250 L200 150" stroke="#5b74b1" strokeDasharray="4,4" strokeWidth="1"></path>
-                    <path d="M400 250 L600 150" stroke="#5b74b1" strokeWidth="1"></path>
-                    <path d="M400 250 L400 400" stroke="#ff716a" strokeWidth="2"></path>
-                    <path d="M200 150 L100 250" stroke="#5b74b1" strokeWidth="1"></path>
+                    {alerts.length > 0 ? (
+                        <>
+                          <path d="M400 250 L200 150" stroke="#5b74b1" strokeDasharray="4,4" strokeWidth="1"></path>
+                          <path d="M400 250 L600 150" stroke="#5b74b1" strokeWidth="1"></path>
+                          <path d="M400 250 L400 400" stroke="#ff716a" strokeWidth="2"></path>
+                          
+                          <circle cx="400" cy="250" fill="#adc6ff" r="12"></circle>
+                          <circle cx="400" cy="250" fill="url(#nodeGlow)" r="24"></circle>
+                          <circle cx="200" cy="150" fill="#5b74b1" r="8"></circle>
+                          <circle cx="600" cy="150" fill="#5b74b1" r="8"></circle>
+                          <circle cx="400" cy="400" fill="#ff716a" r="10"></circle>
 
-                    <circle cx="400" cy="250" fill="#adc6ff" r="12"></circle>
-                    <circle cx="400" cy="250" fill="url(#nodeGlow)" r="24"></circle>
-                    <circle cx="200" cy="150" fill="#5b74b1" r="8"></circle>
-                    <circle cx="600" cy="150" fill="#5b74b1" r="8"></circle>
-                    <circle cx="400" cy="400" fill="#ff716a" r="10"></circle>
-                    <circle cx="100" cy="250" fill="#5b74b1" r="6"></circle>
-
-                    <text fill="#adc6ff" fontFamily="JetBrains Mono" fontSize="12" x="420" y="255">CORE_ROUTER</text>
-                    <text fill="#91aaeb" fontFamily="JetBrains Mono" fontSize="10" x="140" y="140">ENDPOINT_B2</text>
-                    <text fill="#ff716a" fontFamily="JetBrains Mono" fontSize="12" fontWeight="bold" x="420" y="410">MALICIOUS_IP</text>
+                          <text fill="#adc6ff" fontFamily="JetBrains Mono" fontSize="12" x="420" y="255">LOCAL_GATEWAY</text>
+                          <text fill="#91aaeb" fontFamily="JetBrains Mono" fontSize="10" x="140" y="140">{alerts[0]?.dst_ip}</text>
+                          <text fill="#ff716a" fontFamily="JetBrains Mono" fontSize="12" fontWeight="bold" x="420" y="410">{alerts[0]?.src_ip}</text>
+                        </>
+                    ) : (
+                        <text fill="#5b74b1" fontFamily="JetBrains Mono" fontSize="14" x="300" y="250">Awaiting flow telemetry...</text>
+                    )}
                 </svg>
             </div>
             
@@ -77,12 +81,12 @@ export default function ForensicsPage() {
             
             <div className="w-full mt-8 grid grid-cols-2 gap-4">
                 <div className="bg-surface-container-low p-2 rounded">
-                    <div className="text-[9px] text-slate-500 uppercase">Incoming</div>
-                    <div className="text-sm font-mono text-primary font-bold">1.2 GB/s</div>
+                    <div className="text-[9px] text-slate-500 uppercase">Incoming Flows</div>
+                    <div className="text-sm font-mono text-primary font-bold">{alerts.length} streams</div>
                 </div>
                 <div className="bg-surface-container-low p-2 rounded">
-                    <div className="text-[9px] text-slate-500 uppercase">Outgoing</div>
-                    <div className="text-sm font-mono text-tertiary font-bold">842 MB/s</div>
+                    <div className="text-[9px] text-slate-500 uppercase">Total Packets</div>
+                    <div className="text-sm font-mono text-tertiary font-bold">{alerts.reduce((acc, a) => acc + (a.fwd_packets || 0) + (a.bwd_packets || 0), 0).toLocaleString()} PKTs</div>
                 </div>
             </div>
           </section>

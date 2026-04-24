@@ -1,17 +1,25 @@
 "use client"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import useSWR from "swr"
+import { fetchStats, API_BASE } from "@/lib/api"
 
 export function Sidebar() {
   const pathname = usePathname()
 
   const links = [
     { href: "/", icon: "dashboard", label: "Overview" },
+    { href: "/incidents", icon: "warning", label: "Incidents" },
     { href: "/threat-intelligence", icon: "radar", label: "Threat Hunter" },
     { href: "/log-stream", icon: "terminal", label: "Log Stream" },
     { href: "/forensics", icon: "biotech", label: "Forensics" },
     { href: "/reports", icon: "description", label: "Reports" },
   ]
+
+  const { data: stats } = useSWR(`${API_BASE}/stats`, fetchStats, { refreshInterval: 5000 })
+  const dbSize = stats?.db?.size_mb || 0;
+  const isHealthy = dbSize < 1000;
+  const healthPercent = isHealthy ? 99 : Math.max(0, 100 - (dbSize / 1000 * 100));
 
   return (
     <aside className="h-screen w-64 fixed left-0 top-0 bg-[#0d172d] border-r border-blue-500/10 hidden lg:flex flex-col pt-20 z-40">
@@ -22,11 +30,11 @@ export function Sidebar() {
             <span className="font-headline font-bold text-sm text-on-surface">SYSTEM HEALTH</span>
           </div>
           <div className="w-full bg-surface-container-lowest h-1.5 rounded-full overflow-hidden">
-            <div className="bg-primary h-full w-[92%]"></div>
+            <div className={`h-full transition-all ${isHealthy ? 'bg-primary' : 'bg-error'}`} style={{width: `${healthPercent}%`}}></div>
           </div>
           <div className="flex justify-between mt-1">
-            <span className="text-[10px] text-slate-500">92% Operational</span>
-            <span className="text-[10px] text-slate-500">4ms Latency</span>
+            <span className="text-[10px] text-slate-500">{healthPercent.toFixed(0)}% Operational</span>
+            <span className="text-[10px] text-slate-500">Live</span>
           </div>
         </div>
       </div>
@@ -51,8 +59,8 @@ export function Sidebar() {
         </button>
         <div className="mt-6 space-y-2 px-2">
           <div className="flex items-center gap-2 text-[10px] text-slate-500">
-            <span className="material-symbols-outlined text-sm">potted_plant</span>
-            <span>Status: Online</span>
+            <span className={`material-symbols-outlined text-sm ${stats ? 'text-primary' : 'text-error'}`}>potted_plant</span>
+            <span>Status: {stats ? 'Online' : 'Offline'}</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-slate-500">
             <span className="material-symbols-outlined text-sm">build</span>

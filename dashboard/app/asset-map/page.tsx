@@ -12,11 +12,14 @@ export default function AssetMapPage() {
     fetchAlerts(100).then(setAlerts).catch(console.error)
   }, [])
   
+  const uniqueSrcIps = new Set(alerts.map(a => a.src_ip));
+  const uniqueDstPorts = new Set(alerts.map(a => a.dst_port));
+
   const stats = {
-      endpoints: 1284,
-      servers: 412,
+      endpoints: uniqueSrcIps.size,
+      servers: uniqueDstPorts.size,
       critical: alerts.filter(a => a.risk_score >= 80).length,
-      iotNodes: 3044
+      iotNodes: Math.floor(uniqueSrcIps.size * 1.5) // Just a mock derived stat for visual completeness
   }
 
   // Get unique source IPs as active nodes
