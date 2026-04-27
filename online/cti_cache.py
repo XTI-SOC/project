@@ -9,7 +9,9 @@ _stats: dict = {
     "cache_hits": 0,
     "api_calls": 0,
     "api_errors": 0,
-    "private_skips": 0
+    "private_skips": 0,
+    "key_missing_skips": 0,
+    "enrichment_disabled": False
 }
 _lock = threading.Lock()
 _key_warned = False
@@ -83,6 +85,8 @@ def enrich_alert(alert: dict) -> dict:
             api_key = os.environ.get("ABUSEIPDB_KEY")
             if not api_key:
                 with _lock:
+                    _stats["enrichment_disabled"] = True
+                    _stats["key_missing_skips"] += 1
                     if not _key_warned:
                         print("[CTI WARNING] ABUSEIPDB_KEY not set. CTI enrichment disabled.")
                         _key_warned = True

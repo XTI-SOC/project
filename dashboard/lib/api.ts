@@ -1,6 +1,9 @@
-export const API_BASE = "http://127.0.0.1:8000"
-export const API_KEY  = "xti_soc_secure_2024"
-export const WS_URL   = `ws://127.0.0.1:8000/ws?token=${API_KEY}`
+const isBrowser = typeof window !== "undefined";
+const hostname = isBrowser ? window.location.hostname : "127.0.0.1";
+
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? `http://${hostname}:8000`;
+export const API_KEY  = process.env.NEXT_PUBLIC_API_KEY ?? "xti_soc_secure_2024";
+export const WS_URL   = process.env.NEXT_PUBLIC_WS_URL ?? `ws://${hostname}:8000/ws`;
 
 export interface ShapFeature {
   feature: string

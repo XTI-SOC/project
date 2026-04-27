@@ -14,13 +14,16 @@ import pickle
 import os
 import numpy as np
 from pathlib import Path
+import logging
 
+BINARY_THRESHOLD = 0.75
+MULTICLASS_CONFIDENCE_GATE = 0.70
 
 # ── Artifact paths ─────────────────────────────────────────────────────────────
 # Assumes this file is at: online/ml_engine.py
 # Artifacts are at: artifacts/*.pkl
 _ONLINE_DIR = Path(__file__).parent
-_ARTIFACTS_DIR = _ONLINE_DIR.parent / "artifacts"
+_ARTIFACTS_DIR = _ONLINE_DIR.parent / "Offline2" / "artifacts"
 
 _MODEL_PATH = _ARTIFACTS_DIR / "model.pkl"
 _SCALER_PATH = _ARTIFACTS_DIR / "scaler.pkl"
@@ -144,25 +147,39 @@ def predict(feature_vector: np.ndarray) -> tuple[str, str, float]:
         raise ValueError(
             f"Expected feature vector shape (1, 25), got {feature_vector.shape}"
         )
+
+    # --- M-02 Fix: Feature Range Sanity Check ---
+    # feature_vector[0, 0] is Flow Duration (expected in microseconds).
+    # If the unit doesn't match the CICIDS scaler fit, outputs will be garbage.
+    if not (0 <= feature_vector[0, 0] < 1e12):
+        logging.warning(
+            f"[ML_ENGINE] Out-of-bounds Flow Duration detected: {feature_vector[0, 0]}. "
+            f"Possible scaler unit mismatch (M-02 issue)."
+        )
         
     # Step 1: Scale with binary scaler and predict binary class
     scaled_bin = SCALER.transform(feature_vector)
     proba = MODEL.predict_proba(scaled_bin)
     ml_prob = float(proba[0][1])
-    binary_class = "MALICIOUS" if ml_prob > 0.5 else "BENIGN"
+    binary_class = 'MALICIOUS' if ml_prob >= BINARY_THRESHOLD else 'BENIGN'
     
     # Step 2: Multiclass classification
-    if binary_class == "MALICIOUS":
-        if MODEL_MULTICLASS is not None and SCALER_MULTICLASS is not None and LABEL_MAP is not None:
-            scaled_multi = SCALER_MULTICLASS.transform(feature_vector)
-            pred_int = int(MODEL_MULTICLASS.predict(scaled_multi)[0])
-            attack_type = LABEL_MAP.get(pred_int, "UNKNOWN")
-            if attack_type == "BENIGN":
-                attack_type = "UNKNOWN"
+    if binary_class == 'MALICIOUS' and MODEL_MULTICLASS is not None and SCALER_MULTICLASS is not None and LABEL_MAP is not None:
+        scaled_multi = SCALER_MULTICLASS.transform(feature_vector)
+        proba_mc = MODEL_MULTICLASS.predict_proba(scaled_multi)[0]
+        max_prob = float(proba_mc.max())
+        pred_int = int(proba_mc.argmax())
+        
+        if max_prob >= MULTICLASS_CONFIDENCE_GATE:
+            attack_type = LABEL_MAP.get(pred_int, 'UNKNOWN_ANOMALY')
+            if attack_type == 'BENIGN': 
+                attack_type = 'UNKNOWN_ANOMALY'
         else:
-            attack_type = "UNKNOWN"
+            attack_type = 'UNKNOWN_ANOMALY'
+    elif binary_class == 'MALICIOUS':
+        attack_type = 'UNKNOWN_ANOMALY'
     else:
-        attack_type = "BENIGN"
+        attack_type = 'BENIGN'
         
     return binary_class, attack_type, ml_prob
 

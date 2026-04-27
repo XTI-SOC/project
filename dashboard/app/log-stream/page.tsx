@@ -1,6 +1,6 @@
 "use client"
 import { useEffect, useState, useRef } from "react"
-import { fetchAlerts, WS_URL } from "@/lib/api"
+import { fetchAlerts, WS_URL, API_KEY } from "@/lib/api"
 import type { Alert } from "@/lib/api"
 import { Header } from "@/components/Header"
 
@@ -17,6 +17,10 @@ export default function LogStreamPage() {
 
     const connectWebSocket = () => {
       ws = new WebSocket(WS_URL)
+      
+      ws.onopen = () => {
+        ws?.send(JSON.stringify({ token: API_KEY }))
+      }
       
       ws.onclose = () => {
         reconnectTimeout = setTimeout(connectWebSocket, 2000)

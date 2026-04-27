@@ -43,7 +43,10 @@ async def _broadcast(message: str):
 def _broadcast_sync(message: str, loop):
     asyncio.run_coroutine_threadsafe(_broadcast(message), loop)
 
-_API_KEY = "xti_soc_secure_2024"
+import os
+_API_KEY = os.environ.get("XTI_SOC_API_KEY")
+if not _API_KEY:
+    raise RuntimeError("XTI_SOC_API_KEY not set. Aborting.")
 _API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=_API_KEY_NAME, auto_error=False)
 
@@ -60,10 +63,10 @@ def _processing_worker(loop):
             continue
             
         # DROP BENIGN TRAFFIC
-        is_benign = alert.get("ml_class") == "BENIGN" and alert.get("attack_type") == "BENIGN"
-        cti = alert.get("cti_data") or {}
-        if is_benign and cti.get("alert_type") != "CTI_ONLY":
-            continue
+        ml_class = alert.get('ml_class', 'BENIGN')
+        alert_type = (alert.get('cti_data') or {}).get('alert_type', 'NO_ALERT')
+        if alert_type in ('NO_ALERT', None) and ml_class == 'BENIGN':
+            continue  # truly benign, no CTI flag either — drop
 
         try:
             save_alert(alert)
@@ -90,7 +93,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi import Request
 
-limiter = Limiter(key_func=get_remote_address)
+def get_real_ip(request: Request) -> str:
+    return request.client.host or "127.0.0.1"
+
+limiter = Limiter(key_func=get_real_ip)
 app = FastAPI(title="XTI-SOC", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -137,14 +143,16 @@ def health(request: Request):
     }
 
 @app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket, token: str = Query(None)):
-    if token != _API_KEY:
-        await websocket.close(code=1008)
-        return
-        
+async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
-    _ws_clients.add(websocket)
     try:
+        data = await websocket.receive_text()
+        msg = json.loads(data)
+        if msg.get("token") != _API_KEY:
+            await websocket.close(code=1008)
+            return
+            
+        _ws_clients.add(websocket)
         while True:
             await websocket.receive_text()
     except Exception:

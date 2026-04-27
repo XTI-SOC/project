@@ -1,6 +1,6 @@
 "use client"
 import { useEffect, useState } from "react"
-import { fetchAlerts, WS_URL } from "@/lib/api"
+import { fetchAlerts, WS_URL, API_KEY } from "@/lib/api"
 import type { Alert } from "@/lib/api"
 import { Header } from "@/components/Header"
 
@@ -18,7 +18,10 @@ export default function IncidentsPage() {
     const connectWebSocket = () => {
       ws = new WebSocket(WS_URL)
       
-      ws.onopen = () => setWsStatus("open")
+      ws.onopen = () => {
+        setWsStatus("open")
+        ws?.send(JSON.stringify({ token: API_KEY }))
+      }
       
       ws.onclose = () => {
         setWsStatus("closed")

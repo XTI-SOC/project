@@ -10,33 +10,35 @@ Detects:
 import threading
 import time
 import uuid
-from scapy.all import sniff, ARP
+from scapy.all import AsyncSniffer, ARP
 
 class ARPMonitor:
     def __init__(self, alert_queue, interface=None):
         self._alert_queue = alert_queue
         self._interface = interface
         self._stop_flag = threading.Event()
-        self._thread = None
+        self._sniffer = None
         
         # IP -> MAC mapping to detect spoofing
         self._ip_mac_table = {}
 
     def start(self):
-        if self._thread and self._thread.is_alive():
+        if self._sniffer and self._sniffer.running:
             return
             
         self._stop_flag.clear()
-        self._thread = threading.Thread(
-            target=self._sniff_loop,
-            name="arp-monitor",
-            daemon=True
-        )
-        self._thread.start()
+        kwargs = {"filter": "arp", "prn": self._arp_callback, "store": False}
+        if self._interface:
+            kwargs["iface"] = self._interface
+            
+        self._sniffer = AsyncSniffer(**kwargs)
+        self._sniffer.start()
         print(f"[ARP MONITOR] Started on Layer 2.")
 
     def stop(self):
         self._stop_flag.set()
+        if self._sniffer:
+            self._sniffer.stop()
         
     def _arp_callback(self, pkt):
         if self._stop_flag.is_set():
@@ -73,7 +75,10 @@ class ARPMonitor:
             "ml_class": "MALICIOUS",
             "attack_type": "ARP Spoofing",
             "ml_probability": 1.0,
-            "shap_explanation": None,
+            "shap_explanation": [
+                {"feature": f"MAC Address Flipped ({old_mac} -> {new_mac})", "shap_value": 0.95},
+                {"feature": "ARP Poisoning / Man-in-the-Middle signature match", "shap_value": 0.85}
+            ],
             "close_reason": "scapy-arp",
             "fwd_packets": 1,
             "bwd_packets": 0,
@@ -88,13 +93,3 @@ class ARPMonitor:
             "risk_score": 85.0
         }
         self._alert_queue.put(alert)
-
-    def _sniff_loop(self):
-        try:
-            # stop_filter returns True to stop sniffing
-            kwargs = {"filter": "arp", "prn": self._arp_callback, "store": False, "stop_filter": lambda p: self._stop_flag.is_set()}
-            if self._interface:
-                kwargs["iface"] = self._interface
-            sniff(**kwargs)
-        except Exception as e:
-            print(f"[ARP MONITOR ERROR] {e}")

@@ -24,6 +24,10 @@ Thumbs.db
 # Logs
 *.log
 
-#Others
+# Others
 Untitled.ipynb
 .env
+scratch.py
+read_docx.py
+*.db
+

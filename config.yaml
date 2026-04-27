@@ -1,0 +1,8 @@
+# XTI-SOC Configuration File
+
+rules:
+  port_scan_threshold: 50
+  brute_force_threshold: 100
+  volumetric_threshold: 1000
+  dns_flood_threshold: 100
+  half_open_threshold: 30

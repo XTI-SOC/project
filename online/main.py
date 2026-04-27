@@ -67,10 +67,15 @@ def main() -> None:
     print("   Run 'cd dashboard && npm run dev' in another terminal\n")
     
     from api.server import app
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    finally:
+        print("\n[MAIN] Shutting down capture threads...")
+        engine.stop()
+        arp_monitor.stop()
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nShiuting down...")
+        print("\nShutting down...")

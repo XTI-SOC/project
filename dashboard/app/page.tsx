@@ -1,7 +1,7 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
 import useSWR from "swr"
-import { fetchAlerts, fetchStats, WS_URL, API_BASE } from "@/lib/api"
+import { fetchAlerts, fetchStats, WS_URL, API_BASE, API_KEY } from "@/lib/api"
 import type { Alert } from "@/lib/api"
 import { StatsRow }   from "@/components/StatsRow"
 import { AlertFeed }  from "@/components/AlertFeed"
@@ -28,7 +28,10 @@ export default function Page() {
       ws = new WebSocket(WS_URL)
       wsRef.current = ws
       
-      ws.onopen = () => setWsStatus("open")
+      ws.onopen = () => {
+        setWsStatus("open")
+        ws?.send(JSON.stringify({ token: API_KEY }))
+      }
       
       ws.onclose = () => {
         setWsStatus("closed")
