@@ -1,11 +1,11 @@
-# XTI-SOC: Advanced ML Network Detection & Response (NDR)
+# XTI-SOC: Advanced ML Intrusion Detection System (IDS)
 
 ![XTI-SOC Banner](https://img.shields.io/badge/Security-SOC_Intelligence-blueviolet?style=for-the-badge&logo=shield)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-success?style=for-the-badge)
 ![Python Version](https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python)
 ![Next.js](https://img.shields.io/badge/Frontend-Next.js_15-black?style=for-the-badge&logo=next.js)
 
-**XTI-SOC** is an enterprise-grade Network Detection and Response (NDR) platform. It combines kernel-level packet inspection, multi-layered machine learning, and temporal correlation to provide real-time visibility and defense against modern cyber threats. 
+**XTI-SOC** is an enterprise-grade Network Intrusion Detection System (IDS) platform. It combines kernel-level packet inspection, multi-layered machine learning, and temporal correlation to provide real-time visibility against modern cyber threats. 
 
 Unlike traditional signature-based IDS, XTI-SOC uses **Explainable AI (XAI)** to not only detect attacks but explain *why* they were flagged in plain English.
 
