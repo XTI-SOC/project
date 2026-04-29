@@ -168,6 +168,7 @@ class CorrelationEngine:
         
         print(f"[CORRELATION] {src_ip} flagged for {attack_type}")
 
+        base_risk_score = risk_score
         alert = {
             "src_ip": src_ip,
             "dst_ip": "MULTIPLE",
@@ -184,13 +185,26 @@ class CorrelationEngine:
             "fwd_packets": 0,
             "bwd_packets": 0,
             "total_bytes": 0,
-            "cti_data": {
-                "alert_type": "CORRELATION",
-                "abuse_score": 0,
-                "country": "LOCAL",
-                "cti_status": "done"
-            },
-            "alert_id": str(uuid.uuid4()),
-            "risk_score": risk_score
+            "alert_id": str(uuid.uuid4())
         }
+        
+        from online.cti_cache import enrich_alert
+        alert = enrich_alert(alert)
+        
+        if alert.get("cti_data"):
+            alert["cti_data"]["alert_type"] = "CORRELATION"
+            cti_score = alert["cti_data"].get("abuse_score") or 0
+            if cti_score > 25:
+                alert["risk_score"] = round(min(100.0, base_risk_score + (cti_score / 100.0) * 15.0), 1)
+            else:
+                alert["risk_score"] = base_risk_score
+        else:
+            alert["cti_data"] = {
+                "alert_type": "CORRELATION",
+                "abuse_score": None,
+                "total_reports": None,
+                "country": None,
+                "cti_status": "done"
+            }
+            alert["risk_score"] = base_risk_score
         self._alert_queue.put(alert)

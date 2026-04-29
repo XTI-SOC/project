@@ -32,6 +32,7 @@ def get_engine_stats():
     return {"engine": {**nf, **ml}}
 
 async def _broadcast(message: str):
+    global _ws_clients
     dead = set()
     for ws in _ws_clients:
         try:
@@ -40,8 +41,7 @@ async def _broadcast(message: str):
             dead.add(ws)
     _ws_clients -= dead
 
-def _broadcast_sync(message: str, loop):
-    asyncio.run_coroutine_threadsafe(_broadcast(message), loop)
+
 
 import os
 _API_KEY = os.environ.get("XTI_SOC_API_KEY")
@@ -54,6 +54,13 @@ def verify_api_key(api_key: str = Security(api_key_header)):
     if api_key != _API_KEY:
         raise HTTPException(status_code=403, detail="Could not validate API key")
     return api_key
+
+def _broadcast_sync(message: str, loop):
+    try:
+        future = asyncio.run_coroutine_threadsafe(_broadcast(message), loop)
+        future.result(timeout=2.0)
+    except Exception as e:
+        print(f"[WS BROADCAST ERROR] {e}")
 
 def _processing_worker(loop):
     while True:
@@ -72,8 +79,10 @@ def _processing_worker(loop):
             save_alert(alert)
             _server_stats["saved"] += 1
             msg = json.dumps(alert, default=str)
+            print(f"[WS] Preparing to broadcast {alert.get('alert_type')} to {len(_ws_clients)} clients...")
             _broadcast_sync(msg, loop)
             _server_stats["ws_pushes"] += 1
+            print("[WS] Broadcast successful.")
         except Exception as e:
             print(f"[WORKER ERROR] {e}")
 
@@ -103,7 +112,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://10.20.42.183:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

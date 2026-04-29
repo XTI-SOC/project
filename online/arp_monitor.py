@@ -85,8 +85,9 @@ class ARPMonitor:
             "total_bytes": 42,
             "cti_data": {
                 "alert_type": "ARP_ANOMALY",
-                "abuse_score": 0,
-                "country": "LOCAL",
+                "abuse_score": None,
+                "total_reports": None,
+                "country": None,
                 "cti_status": "done"
             },
             "alert_id": str(uuid.uuid4()),

@@ -86,17 +86,30 @@ export default function Page() {
                   <img alt="Dark world map showing glowing cyber attack lines" className="absolute inset-0 w-full h-full object-cover opacity-40 grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAH3IxlESgGieYS1Pn-E7I0lFdithKa2GVnet9I6dt3mx1wE2E6uYjwKpaOF-2mdNQ8NS2tT5Oscy8PNdbB3Vq2pEBfDdjbQFss-E25Xx0dxj0ZN_8Rm2Q_9ByAkvWOpX861xArvW7VlMGyt6gpD3wmX9CZ6HszXT7RudVy3nbjgHDUiH4DSaAuFvVKYCZI_fxM-l2qVz53hXQ2EJ8rX566GhGavCdG7jg6ulckVGr0O9kC9mUG63iXMUqfwm6IOawkmTSMTx0MZMc"/>
                   <div className="absolute inset-0 flex items-center justify-center">
                   <div className="relative w-full h-full">
-                    {Array.from(new Set(alerts.slice(0, 5).map(a => a.src_ip))).map((ip, idx) => {
-                       // Generate a pseudo-random stable coordinate based on IP string
-                       const hash = ip.split('.').reduce((acc, oct) => acc + parseInt(oct), 0);
-                       const top = 20 + (hash % 60); // 20% to 80%
-                       const left = 20 + ((hash * 7) % 60); // 20% to 80%
-                       const isCritical = alerts.find(a => a.src_ip === ip)?.risk_score! >= 80;
+                    {Array.from(new Set(alerts.filter(a => a.cti_data?.country).map(a => a.src_ip)))
+                      .slice(0, 10)
+                      .map((ip, idx) => {
+                       const alert = alerts.find(a => a.src_ip === ip && a.cti_data?.country)!;
+                       const COUNTRY_COORDS: Record<string, {top: number, left: number}> = {
+                          "US": { top: 38, left: 22 }, "CA": { top: 28, left: 20 },
+                          "CN": { top: 42, left: 78 }, "RU": { top: 25, left: 72 },
+                          "IN": { top: 52, left: 71 }, "BR": { top: 68, left: 32 },
+                          "GB": { top: 32, left: 48 }, "DE": { top: 34, left: 51 },
+                          "FR": { top: 37, left: 49 }, "AU": { top: 80, left: 85 },
+                          "IR": { top: 45, left: 63 }, "KP": { top: 40, left: 82 },
+                          "UA": { top: 35, left: 58 }, "ZA": { top: 78, left: 54 },
+                          "JP": { top: 40, left: 86 }, "KR": { top: 42, left: 84 },
+                          "IL": { top: 45, left: 58 }, "NL": { top: 33, left: 50 },
+                       };
+                       const coords = COUNTRY_COORDS[alert.cti_data!.country];
+                       if (!coords) return null; // Hide dot if country not mapped
+                       
+                       const isCritical = alert.risk_score >= 80;
                        return (
                           <div key={ip} 
                                className={`absolute w-2 h-2 rounded-full pulse-red ${isCritical ? 'bg-error' : 'bg-primary'}`} 
-                               style={{top: `${top}%`, left: `${left}%`, animationDelay: `${idx * 0.5}s`}}
-                               title={ip}>
+                               style={{top: `${coords.top}%`, left: `${coords.left}%`, animationDelay: `${idx * 0.5}s`}}
+                               title={`${alert.src_ip} (${alert.cti_data!.country})`}>
                           </div>
                        )
                     })}
