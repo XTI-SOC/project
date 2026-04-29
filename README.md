@@ -214,7 +214,28 @@ cd XTI-SOC/project
 Download and install Npcap from [npcap.com](https://npcap.com/#download).  
 ✅ Make sure to check **"Install Npcap in WinPcap API-compatible mode"** during installation.
 
-### 3. Set Up Python Environment
+### 3. Set Up the Database
+
+**`alerts.db` is not included in the repository.** It is automatically created on the first backend run — you do not need to create it manually.
+
+**SQLite is already included with Python** (it is part of the Python standard library). No separate installation or `pip install` is required.
+
+The database file will appear at `project/alerts.db` the moment you run `python -m online.main` for the first time. It uses WAL (Write-Ahead Logging) mode for concurrent read/write performance.
+
+> **Optional — SQLite Browser:** If you want to visually inspect the raw database tables, download [DB Browser for SQLite](https://sqlitebrowser.org/) (free, cross-platform). Open `alerts.db` with it and browse the `alerts` table directly.
+
+To manually verify the database was created and contains data:
+```bash
+# From the project/ root (with venv activated)
+python -c "import sqlite3; conn = sqlite3.connect('alerts.db'); print(conn.execute('SELECT COUNT(*) FROM alerts').fetchone()); conn.close()"
+```
+
+To **clear all alerts** between test sessions:
+```bash
+python -c "import sqlite3; conn = sqlite3.connect('alerts.db'); conn.execute('DELETE FROM alerts'); conn.commit(); conn.close(); print('Database cleared.')"
+```
+
+### 4. Set Up Python Environment
 ```bash
 # Create and activate a virtual environment
 python -m venv venv
@@ -224,14 +245,14 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Set Up the Dashboard
+### 5. Set Up the Dashboard
 ```bash
 cd dashboard
 npm install
 cd ..
 ```
 
-### 5. Configure Environment Variables
+### 6. Configure Environment Variables
 Create a `.env` file in the `project/` root (same level as `requirements.txt`):
 ```env
 ABUSEIPDB_KEY=your_abuseipdb_api_key_here
