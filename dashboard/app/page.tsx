@@ -101,8 +101,10 @@ export default function Page() {
                           "JP": { top: 40, left: 86 }, "KR": { top: 42, left: 84 },
                           "IL": { top: 45, left: 58 }, "NL": { top: 33, left: 50 },
                        };
-                       const coords = COUNTRY_COORDS[alert.cti_data!.country];
-                       if (!coords) return null; // Hide dot if country not mapped
+                       const country = alert.cti_data?.country;
+                       if (!country) return null; // No country code, skip
+                       const coords = COUNTRY_COORDS[country];
+                       if (!coords) return null; // Country not in map coords, skip
                        
                        const isCritical = alert.risk_score >= 80;
                        return (
