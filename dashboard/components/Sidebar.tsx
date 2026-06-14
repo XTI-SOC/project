@@ -12,8 +12,6 @@ export function Sidebar() {
     { href: "/incidents", icon: "warning", label: "Incidents" },
     { href: "/threat-intelligence", icon: "radar", label: "Threat Hunter" },
     { href: "/log-stream", icon: "terminal", label: "Log Stream" },
-    { href: "/forensics", icon: "biotech", label: "Forensics" },
-    { href: "/reports", icon: "description", label: "Reports" },
   ]
 
   const { data: stats } = useSWR(`${API_BASE}/stats`, fetchStats, { refreshInterval: 5000 })
@@ -54,10 +52,7 @@ export function Sidebar() {
       </div>
       
       <div className="p-4 mt-auto">
-        <button className="w-full bg-gradient-to-br from-primary to-primary-container text-on-primary py-3 rounded-lg text-[10px] font-bold tracking-widest uppercase hover:opacity-90 transition-opacity">
-            GENERATE REPORT
-        </button>
-        <div className="mt-6 space-y-2 px-2">
+        <div className="space-y-2 px-2">
           <div className="flex items-center gap-2 text-[10px] text-slate-500">
             <span className={`material-symbols-outlined text-sm ${stats ? 'text-primary' : 'text-error'}`}>potted_plant</span>
             <span>Status: {stats ? 'Online' : 'Offline'}</span>

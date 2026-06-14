@@ -29,7 +29,6 @@ export function Header({ wsStatus }: { wsStatus: string }) {
         <Link href="/" className={`text-sm font-medium transition-colors ${pathname === '/' ? 'text-blue-400 border-b-2 border-blue-500 pb-1' : 'text-slate-400 hover:text-slate-200'}`}>Dashboard</Link>
         <Link href="/threat-intelligence" className={`text-sm font-medium transition-colors ${pathname === '/threat-intelligence' ? 'text-blue-400 border-b-2 border-blue-500 pb-1' : 'text-slate-400 hover:text-slate-200'}`}>Threat Intelligence</Link>
         <Link href="/incidents" className={`text-sm font-medium transition-colors ${pathname === '/incidents' ? 'text-blue-400 border-b-2 border-blue-500 pb-1' : 'text-slate-400 hover:text-slate-200'}`}>Incidents</Link>
-        <Link href="/asset-map" className={`text-sm font-medium transition-colors ${pathname === '/asset-map' ? 'text-blue-400 border-b-2 border-blue-500 pb-1' : 'text-slate-400 hover:text-slate-200'}`}>Asset Map</Link>
       </nav>
 
       <div className="flex items-center gap-6">
